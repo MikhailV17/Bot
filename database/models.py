@@ -1,59 +1,74 @@
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, BigInteger, func
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import Column, Integer, String, Float, ForeignKey, DateTime, func
+from sqlalchemy.ext.asyncio import AsyncAttrs
+from sqlalchemy.orm import DeclarativeBase, relationship
 
-
-class Base(DeclarativeBase):
-    created: Mapped[DateTime] = mapped_column(DateTime, default=func.now())
-    updated: Mapped[DateTime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
-
+class Base(AsyncAttrs, DeclarativeBase):
+    pass
 
 class Banner(Base):
-    __tablename__ = 'banner'
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(15), unique=True)
-    image: Mapped[str] = mapped_column(String(150), nullable=True)
-    description: Mapped[str] = mapped_column(Text, nullable=True)
-
+    __tablename__ = "banners"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    image = Column(String, nullable=True)
+    description = Column(String)
+    created = Column(DateTime, default=func.now())
+    updated = Column(DateTime, default=func.now(), onupdate=func.now())
 
 class Category(Base):
-    __tablename__ = 'category'
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(150), nullable=False)
-
+    __tablename__ = "categories"
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    created = Column(DateTime, default=func.now())
+    updated = Column(DateTime, default=func.now(), onupdate=func.now())
+    products = relationship("Product", back_populates="category")
 
 class Product(Base):
-    __tablename__ = 'product'
+    __tablename__ = "products"
+    id = Column(Integer, primary_key=True)
+    category_id = Column(Integer, ForeignKey("categories.id"))
+    name = Column(String)
+    description = Column(String, nullable=True)
+    price = Column(Float)
+    image = Column(String, nullable=True)
+    available_keys = Column(Integer, default=0)  # Количество доступных ключей
+    created = Column(DateTime, default=func.now())
+    updated = Column(DateTime, default=func.now(), onupdate=func.now())
+    category = relationship("Category", back_populates="products")
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(150), nullable=False)
-    description: Mapped[str] = mapped_column(Text)
-    price: Mapped[float] = mapped_column(Numeric(5,2), nullable=False)
-    image: Mapped[str] = mapped_column(String(150))
-    category_id: Mapped[int] = mapped_column(ForeignKey('category.id', ondelete='CASCADE'), nullable=False)
-
-    category: Mapped['Category'] = relationship(backref='product')
-
-
-class User(Base):
-    __tablename__ = 'user'
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger, unique=True)
-    first_name: Mapped[str] = mapped_column(String(150), nullable=True)
-    last_name: Mapped[str]  = mapped_column(String(150), nullable=True)
-    phone: Mapped[str]  = mapped_column(String(13), nullable=True)
-
+class Key(Base):
+    __tablename__ = "keys"
+    id = Column(Integer, primary_key=True)
+    product_id = Column(Integer, ForeignKey("products.id"))
+    key_value = Column(String, nullable=True)  # Текстовый ключ
+    key_file = Column(String, nullable=True)  # Путь к файлу ключа
+    description = Column(String, nullable=True)
+    expiry_date = Column(DateTime, nullable=True)  # Срок действия
+    used = Column(Integer, default=0)  # 0 - не использован, 1 - использован
+    created = Column(DateTime, default=func.now())
 
 class Cart(Base):
-    __tablename__ = 'cart'
+    __tablename__ = "cart"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    product_id = Column(Integer, ForeignKey("products.id"))
+    quantity = Column(Integer)
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey('user.user_id', ondelete='CASCADE'), nullable=False)
-    product_id: Mapped[int] = mapped_column(ForeignKey('product.id', ondelete='CASCADE'), nullable=False)
-    quantity: Mapped[int]
+class Order(Base):
+    __tablename__ = "orders"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    username = Column(String)
+    total = Column(Float)
+    status = Column(String, default="pending")  # pending, paid, completed, rejected
+    created = Column(DateTime, default=func.now())
+    key_type = Column(String, nullable=True)  # text или file
+    key_expiry = Column(DateTime, nullable=True)  # Срок действия ключа
+    additional_info = Column(String, nullable=True)  # Доп. информация
 
-    user: Mapped['User'] = relationship(backref='cart')
-    product: Mapped['Product'] = relationship(backref='cart')
-
+class OrderItem(Base):
+    __tablename__ = "order_items"
+    id = Column(Integer, primary_key=True)
+    order_id = Column(Integer, ForeignKey("orders.id"))
+    product_id = Column(Integer, ForeignKey("products.id"))
+    quantity = Column(Integer)
+    price = Column(Float)

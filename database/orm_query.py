@@ -1,165 +1,81 @@
-import math
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload
+from database.models import Banner, Category, Product, Cart, Order, OrderItem, Key
 
-from database.models import Banner, Cart, Category, Product, User
-
-
-############### Работа с баннерами (информационными страницами) ###############
-
-async def orm_add_banner_description(session: AsyncSession, data: dict):
-    #Добавляем новый или изменяем существующий по именам
-    #пунктов меню: main, about, cart, shipping, payment, catalog
-    query = select(Banner)
-    result = await session.execute(query)
-    if result.first():
-        return
-    session.add_all([Banner(name=name, description=description) for name, description in data.items()]) 
+async def orm_add_banner_description(session: AsyncSession, name: str, description: str, image: str = None):
+    banner = Banner(name=name, description=description, image=image)
+    session.add(banner)
     await session.commit()
 
-
-async def orm_change_banner_image(session: AsyncSession, name: str, image: str):
-    query = update(Banner).where(Banner.name == name).values(image=image)
-    await session.execute(query)
+async def orm_add_category(session: AsyncSession, name: str):
+    stmt = select(Category).where(Category.name == name)
+    result = await session.execute(stmt)
+    if result.scalars().first():
+        return False
+    session.add(Category(name=name))
     await session.commit()
+    return True
 
-
-async def orm_get_banner(session: AsyncSession, page: str):
-    query = select(Banner).where(Banner.name == page)
-    result = await session.execute(query)
-    return result.scalar()
-
-
-async def orm_get_info_pages(session: AsyncSession):
-    query = select(Banner)
-    result = await session.execute(query)
-    return result.scalars().all()
-
-
-############################ Категории ######################################
+async def orm_add_product(session: AsyncSession, category_id: int, name: str, price: float, available_keys: int = 0):
+    product = Product(category_id=category_id, name=name, price=price, available_keys=available_keys)
+    session.add(product)
+    await session.commit()
 
 async def orm_get_categories(session: AsyncSession):
     query = select(Category)
     result = await session.execute(query)
     return result.scalars().all()
 
-async def orm_create_categories(session: AsyncSession, categories: list):
-    query = select(Category)
-    result = await session.execute(query)
-    if result.first():
-        return
-    session.add_all([Category(name=name) for name in categories]) 
-    await session.commit()
-
-############ Админка: добавить/изменить/удалить товар ########################
-
-async def orm_add_product(session: AsyncSession, data: dict):
-    obj = Product(
-        name=data["name"],
-        description=data["description"],
-        price=float(data["price"]),
-        image=data["image"],
-        category_id=int(data["category"]),
-    )
-    session.add(obj)
-    await session.commit()
-
-
-async def orm_get_products(session: AsyncSession, category_id):
-    query = select(Product).where(Product.category_id == int(category_id))
+async def orm_get_products(session: AsyncSession, category_id: int):
+    query = select(Product).where(Product.category_id == category_id)
     result = await session.execute(query)
     return result.scalars().all()
 
-
-async def orm_get_product(session: AsyncSession, product_id: int):
-    query = select(Product).where(Product.id == product_id)
+async def orm_get_banner(session: AsyncSession, name: str):
+    query = select(Banner).where(Banner.name == name)
     result = await session.execute(query)
-    return result.scalar()
-
-
-async def orm_update_product(session: AsyncSession, product_id: int, data):
-    query = (
-        update(Product)
-        .where(Product.id == product_id)
-        .values(
-            name=data["name"],
-            description=data["description"],
-            price=float(data["price"]),
-            image=data["image"],
-            category_id=int(data["category"]),
-        )
-    )
-    await session.execute(query)
-    await session.commit()
-
-
-async def orm_delete_product(session: AsyncSession, product_id: int):
-    query = delete(Product).where(Product.id == product_id)
-    await session.execute(query)
-    await session.commit()
-
-##################### Добавляем юзера в БД #####################################
-
-async def orm_add_user(
-    session: AsyncSession,
-    user_id: int,
-    first_name: str | None = None,
-    last_name: str | None = None,
-    phone: str | None = None,
-):
-    query = select(User).where(User.user_id == user_id)
-    result = await session.execute(query)
-    if result.first() is None:
-        session.add(
-            User(user_id=user_id, first_name=first_name, last_name=last_name, phone=phone)
-        )
-        await session.commit()
-
-
-######################## Работа с корзинами #######################################
+    return result.scalars().first()
 
 async def orm_add_to_cart(session: AsyncSession, user_id: int, product_id: int):
     query = select(Cart).where(Cart.user_id == user_id, Cart.product_id == product_id)
-    cart = await session.execute(query)
-    cart = cart.scalar()
+    result = await session.execute(query)
+    cart = result.scalars().first()
     if cart:
         cart.quantity += 1
-        await session.commit()
-        return cart
     else:
         session.add(Cart(user_id=user_id, product_id=product_id, quantity=1))
-        await session.commit()
+    await session.commit()
 
-
-
-async def orm_get_user_carts(session: AsyncSession, user_id):
-    query = select(Cart).filter(Cart.user_id == user_id).options(joinedload(Cart.product))
+async def orm_get_user_carts(session: AsyncSession, user_id: int):
+    query = select(Cart).where(Cart.user_id == user_id)
     result = await session.execute(query)
     return result.scalars().all()
 
-
-async def orm_delete_from_cart(session: AsyncSession, user_id: int, product_id: int):
-    query = delete(Cart).where(Cart.user_id == user_id, Cart.product_id == product_id)
-    await session.execute(query)
+async def orm_clear_cart(session: AsyncSession, user_id: int):
+    await session.execute("DELETE FROM cart WHERE user_id = :user_id", {"user_id": user_id})
     await session.commit()
 
+async def orm_create_order(session: AsyncSession, user_id: int, username: str, total: float, items: list):
+    order = Order(user_id=user_id, username=username, total=total)
+    session.add(order)
+    await session.flush()
+    for item in items:
+        session.add(OrderItem(order_id=order.id, product_id=item.product_id, quantity=item.quantity, price=item.product.price))
+        await session.execute(update(Product).where(Product.id == item.product_id).values(available_keys=Product.available_keys - item.quantity))
+    await session.commit()
+    return order
 
-async def orm_reduce_product_in_cart(session: AsyncSession, user_id: int, product_id: int):
-    query = select(Cart).where(Cart.user_id == user_id, Cart.product_id == product_id)
-    cart = await session.execute(query)
-    cart = cart.scalar()
+async def orm_add_key(session: AsyncSession, product_id: int, key_value: str = None, key_file: str = None, description: str = None, expiry_date=None):
+    key = Key(product_id=product_id, key_value=key_value, key_file=key_file, description=description, expiry_date=expiry_date)
+    session.add(key)
+    await session.execute(update(Product).where(Product.id == product_id).values(available_keys=Product.available_keys + 1))
+    await session.commit()
 
-    if not cart:
-        return
-    if cart.quantity > 1:
-        cart.quantity -= 1
-        await session.commit()
-        return True
-    else:
-        await orm_delete_from_cart(session, user_id, product_id)
-        await session.commit()
-        return False
+async def orm_get_keys(session: AsyncSession, product_id: int):
+    query = select(Key).where(Key.product_id == product_id, Key.used == 0)
+    result = await session.execute(query)
+    return result.scalars().all()
 
-
-
+async def orm_update_key(session: AsyncSession, key_id: int, used: int = 1):
+    await session.execute(update(Key).where(Key.id == key_id).values(used=used))
+    await session.commit()
