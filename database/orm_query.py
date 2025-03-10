@@ -162,4 +162,16 @@ async def orm_reduce_product_in_cart(session: AsyncSession, user_id: int, produc
         return False
 
 
+######################## Добавление ключей #######################################
+from sqlalchemy.ext.asyncio import AsyncSession
+from database.models import Key
 
+async def orm_add_key(session: AsyncSession, product_id: int, name: str, key_value: str = None, key_file: str = None):
+    key = Key(
+        product_id=product_id,
+        name=name,
+        key_value=key_value,
+        key_file=key_file
+    )
+    session.add(key)
+    await session.commit()

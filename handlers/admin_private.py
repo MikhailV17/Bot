@@ -14,6 +14,7 @@ from database.orm_query import (
     orm_get_product,
     orm_get_products,
     orm_update_product,
+    orm_add_key,
 )
 
 from filters.chat_types import ChatTypeFilter, IsAdmin
@@ -30,6 +31,7 @@ ADMIN_KB = get_keyboard(
     "Добавить товар",
     "Ассортимент",
     "Добавить/Изменить баннер",
+    "Добавить ключ",
     placeholder="Выберите действие",
     sizes=(2,),
 )
@@ -320,3 +322,149 @@ async def add_image(message: types.Message, state: FSMContext, session: AsyncSes
 @admin_router.message(AddProduct.image)
 async def add_image2(message: types.Message, state: FSMContext):
     await message.answer("Отправьте фото пищи")
+
+
+######################### FSM для добавления ключей админом ###################
+
+class AddKey(StatesGroup):
+    product_id = State()    # Выбор продукта для ключа
+    name = State()          # Название ключа
+    key_type = State()      # Тип ключа (текст или файл)
+    key_value = State()     # Значение ключа (если текст)
+    key_file = State()      # Файл ключа (если файл)
+
+    texts = {
+        "AddKey:product_id": "Выберите продукт заново ⬆️",
+        "AddKey:name": "Введите название ключа заново:",
+        "AddKey:key_type": "Выберите тип ключа заново ⬆️",
+        "AddKey:key_value": "Введите значение ключа заново:",
+        "AddKey:key_file": "Загрузите файл ключа заново:",
+    }
+
+# Запуск FSM для добавления ключа
+@admin_router.message(StateFilter(None), F.text == "Добавить ключ")
+async def add_key_start(message: types.Message, state: FSMContext, session: AsyncSession):
+    categories = await orm_get_categories(session)
+    btns = {category.name: f"key_cat_{category.id}" for category in categories}
+    await message.answer("Выберите категорию продукта для ключа", reply_markup=get_callback_btns(btns=btns))
+    await state.set_state(AddKey.product_id)
+
+# Выбор категории и отображение продуктов
+@admin_router.callback_query(AddKey.product_id, F.data.startswith("key_cat_"))
+async def select_category_for_key(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    category_id = int(callback.data.split("_")[-1])
+    products = await orm_get_products(session, category_id)
+    if not products:
+        await callback.message.answer("В этой категории нет продуктов!")
+        await state.clear()
+        await callback.answer()
+        return
+    btns = {product.name: f"key_prod_{product.id}" for product in products}
+    await callback.message.answer("Выберите продукт", reply_markup=get_callback_btns(btns=btns))
+    await callback.answer()
+
+# Выбор продукта
+@admin_router.callback_query(AddKey.product_id, F.data.startswith("key_prod_"))
+async def select_product_for_key(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    product_id = int(callback.data.split("_")[-1])
+    product = await orm_get_product(session, product_id)
+    if not product:
+        await callback.message.answer("Продукт не найден!")
+        await state.clear()
+        await callback.answer()
+        return
+    await state.update_data(product_id=product_id)
+    await callback.message.answer("Введите название ключа")
+    await state.set_state(AddKey.name)
+    await callback.answer()
+
+# Некорректный ввод на шаге выбора продукта
+@admin_router.message(AddKey.product_id)
+async def invalid_product_input(message: types.Message, state: FSMContext):
+    await message.answer("Выберите продукт из кнопок!")
+
+# Ввод названия ключа
+@admin_router.message(AddKey.name, F.text)
+async def add_key_name(message: types.Message, state: FSMContext):
+    if len(message.text) > 150:
+        await message.answer("Название ключа не должно превышать 150 символов. Введите заново.")
+        return
+    await state.update_data(name=message.text)
+    await message.answer(
+        "Выберите тип ключа:",
+        reply_markup=get_callback_btns(btns={"Текст": "key_text", "Файл": "key_file"})
+    )
+    await state.set_state(AddKey.key_type)
+
+# Некорректный ввод названия
+@admin_router.message(AddKey.name)
+async def invalid_key_name(message: types.Message, state: FSMContext):
+    await message.answer("Введите текстовое название ключа!")
+
+# Выбор типа ключа
+@admin_router.callback_query(AddKey.key_type, F.data.in_(["key_text", "key_file"]))
+async def select_key_type(callback: types.CallbackQuery, state: FSMContext):
+    if callback.data == "key_text":
+        await state.update_data(key_type="text")
+        await callback.message.answer("Введите значение ключа")
+        await state.set_state(AddKey.key_value)
+    elif callback.data == "key_file":
+        await state.update_data(key_type="file")
+        await callback.message.answer("Загрузите файл ключа")
+        await state.set_state(AddKey.key_file)
+    await callback.answer()
+
+# Некорректный ввод на шаге выбора типа ключа
+@admin_router.message(AddKey.key_type)
+async def invalid_key_type(message: types.Message, state: FSMContext):
+    await message.answer("Выберите тип ключа из кнопок!")
+
+# Ввод текстового значения ключа и сохранение
+@admin_router.message(AddKey.key_value, F.text)
+async def add_key_value(message: types.Message, state: FSMContext, session: AsyncSession):
+    if len(message.text) > 150:
+        await message.answer("Значение ключа не должно превышать 150 символов. Введите заново.")
+        return
+    data = await state.get_data()
+    try:
+        await orm_add_key(
+            session,
+            product_id=data["product_id"],
+            name=data["name"],
+            key_value=message.text,
+            key_file=None
+        )
+        await message.answer("Ключ успешно добавлен!", reply_markup=ADMIN_KB)
+    except Exception as e:
+        await message.answer(f"Ошибка при добавлении ключа: {str(e)}", reply_markup=ADMIN_KB)
+    finally:
+        await state.clear()
+
+# Некорректный ввод текстового значения
+@admin_router.message(AddKey.key_value)
+async def invalid_key_value(message: types.Message, state: FSMContext):
+    await message.answer("Введите текстовое значение ключа!")
+
+# Загрузка файла ключа и сохранение
+@admin_router.message(AddKey.key_file, F.document)
+async def add_key_file(message: types.Message, state: FSMContext, session: AsyncSession):
+    file_id = message.document.file_id
+    data = await state.get_data()
+    try:
+        await orm_add_key(
+            session,
+            product_id=data["product_id"],
+            name=data["name"],
+            key_value=None,
+            key_file=file_id
+        )
+        await message.answer("Ключ в виде файла успешно добавлен!", reply_markup=ADMIN_KB)
+    except Exception as e:
+        await message.answer(f"Ошибка при добавлении ключа: {str(e)}", reply_markup=ADMIN_KB)
+    finally:
+        await state.clear()
+
+# Некорректный ввод файла
+@admin_router.message(AddKey.key_file)
+async def invalid_key_file(message: types.Message, state: FSMContext):
+    await message.answer("Загрузите файл ключа (документ)!")

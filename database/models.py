@@ -55,7 +55,7 @@ class Key(Base):
     used: Mapped[int] = mapped_column(default=0)  # 0 - не использован, 1 - использован
 
     product: Mapped['Product'] = relationship(back_populates="keys")  # Связь с продуктом
-    user: Mapped['User'] = relationship()  # Связь с пользователем
+    user: Mapped['User'] = relationship(back_populates="keys")  # Уточняем обратную связь
 
 class User(Base):
     __tablename__ = 'user'
