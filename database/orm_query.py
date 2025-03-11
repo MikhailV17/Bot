@@ -3,10 +3,25 @@ from sqlalchemy import select, update, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from database.models import Banner, Cart, Category, Product, User
+#from database.models import Banner, Cart, Category, Product, User
+
+from database.models import Banner, Cart, Category, Product, User, Key  # Добавляем Key сюда
+
+############### Редактирование/удаление ключей ###############
+async def orm_delete_key(session: AsyncSession, key_id: int):
+    stmt = delete(Key).where(Key.id == key_id)
+    await session.execute(stmt)
+    await session.commit()  # Добавляем фиксацию изменений
+
+async def orm_update_key(session: AsyncSession, key_id: int, data: dict):
+    query = select(Key).where(Key.id == key_id)
+    result = await session.execute(query)
+    key = result.scalar_one()
+    for field, value in data.items():
+        setattr(key, field, value)
+    await session.commit() 
 
 ############### Выборка остатка действующих ключей ###############
-
 async def orm_get_available_keys_count(session: AsyncSession, product_id: int) -> int:
     query = select(func.count(Key.id)).where(
         Key.product_id == product_id,

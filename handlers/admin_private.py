@@ -1,8 +1,9 @@
+import logging
 from aiogram import F, Router, types
 from aiogram.filters import Command, StateFilter, or_f
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-
+from sqlalchemy import select  # Добавляем импорт select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.orm_query import (
@@ -15,13 +16,15 @@ from database.orm_query import (
     orm_get_products,
     orm_update_product,
     orm_add_key,
+    orm_delete_key,  # Добавляем новые функции
+    orm_update_key,  # Добавляем новые функции
 )
 
 from filters.chat_types import ChatTypeFilter, IsAdmin
 
 from kbds.inline import get_callback_btns
 from kbds.reply import get_keyboard
-
+from database.models import Key  # Добавляем импорт модели Key
 
 admin_router = Router()
 admin_router.message.filter(ChatTypeFilter(["private"]), IsAdmin())
@@ -32,6 +35,8 @@ ADMIN_KB = get_keyboard(
     "Ассортимент",
     "Добавить/Изменить баннер",
     "Добавить ключ",
+    "Удалить ключ",  # Новая кнопка
+    "Изменить ключ",  # Новая кнопка
     placeholder="Выберите действие",
     sizes=(2,),
 )
@@ -115,216 +120,7 @@ async def add_banner2(message: types.Message, state: FSMContext):
 
 
 
-######################### FSM для дабавления/изменения товаров админом ###################
-
-class AddProduct(StatesGroup):
-    # Шаги состояний
-    name = State()
-    description = State()
-    category = State()
-    price = State()
-    image = State()
-
-    product_for_change = None
-
-    texts = {
-        "AddProduct:name": "Введите название заново:",
-        "AddProduct:description": "Введите описание заново:",
-        "AddProduct:category": "Выберите категорию  заново ⬆️",
-        "AddProduct:price": "Введите стоимость заново:",
-        "AddProduct:image": "Этот стейт последний, поэтому...",
-    }
-
-
-# Становимся в состояние ожидания ввода name
-@admin_router.callback_query(StateFilter(None), F.data.startswith("change_"))
-async def change_product_callback(
-    callback: types.CallbackQuery, state: FSMContext, session: AsyncSession
-):
-    product_id = callback.data.split("_")[-1]
-
-    product_for_change = await orm_get_product(session, int(product_id))
-
-    AddProduct.product_for_change = product_for_change
-
-    await callback.answer()
-    await callback.message.answer(
-        "Введите название товара", reply_markup=types.ReplyKeyboardRemove()
-    )
-    await state.set_state(AddProduct.name)
-
-
-# Становимся в состояние ожидания ввода name
-@admin_router.message(StateFilter(None), F.text == "Добавить товар")
-async def add_product(message: types.Message, state: FSMContext):
-    await message.answer(
-        "Введите название товара", reply_markup=types.ReplyKeyboardRemove()
-    )
-    await state.set_state(AddProduct.name)
-
-
-# Хендлер отмены и сброса состояния должен быть всегда именно здесь,
-# после того, как только встали в состояние номер 1 (элементарная очередность фильтров)
-@admin_router.message(StateFilter("*"), Command("отмена"))
-@admin_router.message(StateFilter("*"), F.text.casefold() == "отмена")
-async def cancel_handler(message: types.Message, state: FSMContext) -> None:
-    current_state = await state.get_state()
-    if current_state is None:
-        return
-    if AddProduct.product_for_change:
-        AddProduct.product_for_change = None
-    await state.clear()
-    await message.answer("Действия отменены", reply_markup=ADMIN_KB)
-
-
-# Вернутся на шаг назад (на прошлое состояние)
-@admin_router.message(StateFilter("*"), Command("назад"))
-@admin_router.message(StateFilter("*"), F.text.casefold() == "назад")
-async def back_step_handler(message: types.Message, state: FSMContext) -> None:
-    current_state = await state.get_state()
-
-    if current_state == AddProduct.name:
-        await message.answer(
-            'Предидущего шага нет, или введите название товара или напишите "отмена"'
-        )
-        return
-
-    previous = None
-    for step in AddProduct.__all_states__:
-        if step.state == current_state:
-            await state.set_state(previous)
-            await message.answer(
-                f"Ок, вы вернулись к прошлому шагу \n {AddProduct.texts[previous.state]}"
-            )
-            return
-        previous = step
-
-
-# Ловим данные для состояние name и потом меняем состояние на description
-@admin_router.message(AddProduct.name, F.text)
-async def add_name(message: types.Message, state: FSMContext):
-    if message.text == "." and AddProduct.product_for_change:
-        await state.update_data(name=AddProduct.product_for_change.name)
-    else:
-        # Здесь можно сделать какую либо дополнительную проверку
-        # и выйти из хендлера не меняя состояние с отправкой соответствующего сообщения
-        # например:
-        if 4 >= len(message.text) >= 150:
-            await message.answer(
-                "Название товара не должно превышать 150 символов\nили быть менее 5ти символов. \n Введите заново"
-            )
-            return
-
-        await state.update_data(name=message.text)
-    await message.answer("Введите описание товара")
-    await state.set_state(AddProduct.description)
-
-# Хендлер для отлова некорректных вводов для состояния name
-@admin_router.message(AddProduct.name)
-async def add_name2(message: types.Message, state: FSMContext):
-    await message.answer("Вы ввели не допустимые данные, введите текст названия товара")
-
-
-# Ловим данные для состояние description и потом меняем состояние на price
-@admin_router.message(AddProduct.description, F.text)
-async def add_description(message: types.Message, state: FSMContext, session: AsyncSession):
-    if message.text == "." and AddProduct.product_for_change:
-        await state.update_data(description=AddProduct.product_for_change.description)
-    else:
-        if 4 >= len(message.text):
-            await message.answer(
-                "Слишком короткое описание. \n Введите заново"
-            )
-            return
-        await state.update_data(description=message.text)
-
-    categories = await orm_get_categories(session)
-    btns = {category.name : str(category.id) for category in categories}
-    await message.answer("Выберите категорию", reply_markup=get_callback_btns(btns=btns))
-    await state.set_state(AddProduct.category)
-
-# Хендлер для отлова некорректных вводов для состояния description
-@admin_router.message(AddProduct.description)
-async def add_description2(message: types.Message, state: FSMContext):
-    await message.answer("Вы ввели не допустимые данные, введите текст описания товара")
-
-
-# Ловим callback выбора категории
-@admin_router.callback_query(AddProduct.category)
-async def category_choice(callback: types.CallbackQuery, state: FSMContext , session: AsyncSession):
-    if int(callback.data) in [category.id for category in await orm_get_categories(session)]:
-        await callback.answer()
-        await state.update_data(category=callback.data)
-        await callback.message.answer('Теперь введите цену товара.')
-        await state.set_state(AddProduct.price)
-    else:
-        await callback.message.answer('Выберите катеорию из кнопок.')
-        await callback.answer()
-
-#Ловим любые некорректные действия, кроме нажатия на кнопку выбора категории
-@admin_router.message(AddProduct.category)
-async def category_choice2(message: types.Message, state: FSMContext):
-    await message.answer("'Выберите катеорию из кнопок.'") 
-
-
-# Ловим данные для состояние price и потом меняем состояние на image
-@admin_router.message(AddProduct.price, F.text)
-async def add_price(message: types.Message, state: FSMContext):
-    if message.text == "." and AddProduct.product_for_change:
-        await state.update_data(price=AddProduct.product_for_change.price)
-    else:
-        try:
-            float(message.text)
-        except ValueError:
-            await message.answer("Введите корректное значение цены")
-            return
-
-        await state.update_data(price=message.text)
-    await message.answer("Загрузите изображение товара")
-    await state.set_state(AddProduct.image)
-
-# Хендлер для отлова некорректных ввода для состояния price
-@admin_router.message(AddProduct.price)
-async def add_price2(message: types.Message, state: FSMContext):
-    await message.answer("Вы ввели не допустимые данные, введите стоимость товара")
-
-
-# Ловим данные для состояние image и потом выходим из состояний
-@admin_router.message(AddProduct.image, or_f(F.photo, F.text == "."))
-async def add_image(message: types.Message, state: FSMContext, session: AsyncSession):
-    if message.text and message.text == "." and AddProduct.product_for_change:
-        await state.update_data(image=AddProduct.product_for_change.image)
-
-    elif message.photo:
-        await state.update_data(image=message.photo[-1].file_id)
-    else:
-        await message.answer("Отправьте фото пищи")
-        return
-    data = await state.get_data()
-    try:
-        if AddProduct.product_for_change:
-            await orm_update_product(session, AddProduct.product_for_change.id, data)
-        else:
-            await orm_add_product(session, data)
-        await message.answer("Товар добавлен/изменен", reply_markup=ADMIN_KB)
-        await state.clear()
-
-    except Exception as e:
-        await message.answer(
-            f"Ошибка: \n{str(e)}\nОбратись к программеру, он опять денег хочет",
-            reply_markup=ADMIN_KB,
-        )
-        await state.clear()
-
-    AddProduct.product_for_change = None
-
-# Ловим все прочее некорректное поведение для этого состояния
-@admin_router.message(AddProduct.image)
-async def add_image2(message: types.Message, state: FSMContext):
-    await message.answer("Отправьте фото пищи")
-
-
-######################### FSM для добавления ключей админом ###################
+######################### FSM для дабавления Ключей админом ###################
 
 class AddKey(StatesGroup):
     product_id = State()    # Выбор продукта для ключа
@@ -468,3 +264,195 @@ async def add_key_file(message: types.Message, state: FSMContext, session: Async
 @admin_router.message(AddKey.key_file)
 async def invalid_key_file(message: types.Message, state: FSMContext):
     await message.answer("Загрузите файл ключа (документ)!")
+
+######################### FSM для удаления ключей админом ###################
+
+class DeleteKey(StatesGroup):
+    key_selection = State()  # Выбор ключа для удаления
+
+# Запуск FSM для удаления ключа
+@admin_router.message(StateFilter(None), F.text == "Удалить ключ")
+async def delete_key_start(message: types.Message, state: FSMContext, session: AsyncSession):
+    query = select(Key).where(Key.used == 0)
+    result = await session.execute(query)
+    keys = result.scalars().all()
+    if not keys:
+        await message.answer("Нет доступных ключей для удаления.", reply_markup=ADMIN_KB)
+        return
+    btns = {f"{key.name} (ID: {key.id})": f"del_key_{key.id}" for key in keys}
+    await message.answer("Выберите ключ для удаления:", reply_markup=get_callback_btns(btns=btns))
+    await state.set_state(DeleteKey.key_selection)
+
+# Выбор ключа для удаления
+@admin_router.callback_query(DeleteKey.key_selection, F.data.startswith("del_key_"))
+async def confirm_delete_key(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    key_id = int(callback.data.split("_")[-1])
+    query = select(Key).where(Key.id == key_id)
+    result = await session.execute(query)
+    key = result.scalar()
+    if not key:
+        await callback.message.answer("Ключ не найден!", reply_markup=ADMIN_KB)
+        await state.clear()
+        await callback.answer()
+        return
+    try:
+        await orm_delete_key(session, key_id)
+        await session.commit()
+        await callback.message.answer(f"Ключ '{key.name}' (ID: {key_id}) удалён!", reply_markup=ADMIN_KB)
+    except Exception as e:
+        await callback.message.answer(f"Ошибка при удалении ключа: {str(e)}", reply_markup=ADMIN_KB)
+    finally:
+        await state.clear()
+        await callback.answer()
+
+# Некорректный ввод на шаге выбора ключа
+@admin_router.message(DeleteKey.key_selection)
+async def invalid_key_selection(message: types.Message, state: FSMContext):
+    await message.answer("Выберите ключ из кнопок!")
+
+
+
+######################### FSM для изменения ключей админом ###################
+
+######################### FSM для изменения ключей админом ###################
+
+class EditKey(StatesGroup):
+    key_selection = State()
+    field_selection = State()
+    new_value = State()
+
+@admin_router.message(StateFilter(None), F.text == "Изменить ключ")
+async def edit_key_start(message: types.Message, state: FSMContext, session: AsyncSession):
+    query = select(Key).where(Key.used == 0)
+    result = await session.execute(query)
+    keys = result.scalars().all()
+    if not keys:
+        await message.answer("Нет доступных ключей для изменения.", reply_markup=ADMIN_KB)
+        return
+    btns = {f"{key.name} (ID: {key.id})": f"edit_key_{key.id}" for key in keys}
+    await message.answer("Выберите ключ для изменения:", reply_markup=get_callback_btns(btns=btns))
+    await state.set_state(EditKey.key_selection)
+
+@admin_router.callback_query(EditKey.key_selection, F.data.startswith("edit_key_"))
+async def select_key_to_edit(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    key_id = int(callback.data.split("_")[-1])
+    query = select(Key).where(Key.id == key_id)
+    result = await session.execute(query)
+    key = result.scalar()
+    if not key:
+        await callback.message.answer("Ключ не найден!", reply_markup=ADMIN_KB)
+        await state.clear()
+        await callback.answer()
+        return
+    await state.update_data(key_id=key_id)
+    btns = {
+        "Название": "edit_field_name",
+        "Значение ключа": "edit_field_keyvalue",
+        "Файл ключа": "edit_field_keyfile",
+    }
+    await callback.message.answer(
+        f"Выберите поле ключа '{key.name}' (ID: {key_id}) для изменения:",
+        reply_markup=get_callback_btns(btns=btns)
+    )
+    await state.set_state(EditKey.field_selection)
+    await callback.answer()
+
+@admin_router.callback_query(EditKey.field_selection, F.data.startswith("edit_field_"))
+async def select_field_to_edit(callback: types.CallbackQuery, state: FSMContext):
+    field = callback.data.split("_")[-1]
+    field_mapping = {
+        "name": "name",
+        "keyvalue": "key_value",
+        "keyfile": "key_file"
+    }
+    mapped_field = field_mapping.get(field)
+    if not mapped_field:
+        await callback.message.answer("Некорректное поле!", reply_markup=ADMIN_KB)
+        await state.clear()
+        await callback.answer()
+        return
+    await state.update_data(field=mapped_field)
+    if mapped_field == "name":
+        await callback.message.answer("Введите новое название ключа (или '-' для отмены):")
+    elif mapped_field == "key_value":
+        await callback.message.answer("Введите новое значение ключа (или '-' для отмены):")
+    elif mapped_field == "key_file":
+        await callback.message.answer("Загрузите новый файл ключа (или отправьте '-' для отмены):")
+    await state.set_state(EditKey.new_value)
+    await callback.answer()
+
+@admin_router.message(EditKey.field_selection)
+async def invalid_field_selection(message: types.Message, state: FSMContext):
+    await message.answer("Выберите поле из кнопок!")
+
+# Обработка текстовых значений (name, key_value, и очистка/отмена)
+@admin_router.message(EditKey.new_value, F.text)
+async def update_key_value_text(message: types.Message, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    key_id = data["key_id"]
+    field = data["field"]
+    new_value = message.text
+
+    await message.answer(f"Обработка текста: key_id={key_id}, field={field}, value={new_value}")  # Отладка
+
+    if new_value == "-":
+        try:
+            await orm_update_key(session, key_id, {field: None})
+            await session.commit()
+            await message.answer(f"Поле '{field}' ключа с ID {key_id} очищено!", reply_markup=ADMIN_KB)
+        except Exception as e:
+            await message.answer(f"Ошибка при очистке ключа: {str(e)}", reply_markup=ADMIN_KB)
+        finally:
+            await state.clear()
+        return
+
+    if field == "name":
+        if not new_value or len(new_value) > 150:
+            await message.answer("Название ключа должно быть от 1 до 150 символов. Введите заново.")
+            return
+    elif field == "key_value":
+        if len(new_value) > 150:
+            await message.answer("Значение ключа не должно превышать 150 символов. Введите заново.")
+            return
+
+    try:
+        await orm_update_key(session, key_id, {field: new_value})
+        await session.commit()
+        await message.answer(f"Поле '{field}' ключа с ID {key_id} обновлено!", reply_markup=ADMIN_KB)
+    except Exception as e:
+        await message.answer(f"Ошибка при обновлении ключа: {str(e)}", reply_markup=ADMIN_KB)
+    finally:
+        await state.clear()
+
+# Обработка загрузки файла (key_file)
+@admin_router.message(EditKey.new_value, F.document)
+async def update_key_file(message: types.Message, state: FSMContext, session: AsyncSession):
+    data = await state.get_data()
+    key_id = data["key_id"]
+    field = data["field"]
+
+    await message.answer(f"Обработка файла: key_id={key_id}, field={field}")  # Отладка
+
+    if field != "key_file":
+        await message.answer("Ожидается текстовое значение, а не файл! Введите заново.")
+        return
+
+    new_value = message.document.file_id
+    try:
+        await orm_update_key(session, key_id, {field: new_value})
+        await session.commit()
+        await message.answer(f"Поле '{field}' ключа с ID {key_id} обновлено!", reply_markup=ADMIN_KB)
+    except Exception as e:
+        await message.answer(f"Ошибка при обновлении ключа: {str(e)}", reply_markup=ADMIN_KB)
+    finally:
+        await state.clear()
+
+# Обработка некорректного ввода
+@admin_router.message(EditKey.new_value)
+async def invalid_new_value(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    field = data["field"]
+    if field == "key_file":
+        await message.answer("Загрузите файл или отправьте '-' для отмены!")
+    elif field in ["name", "key_value"]:
+        await message.answer(f"Введите значение для '{field}' или '-' для отмены!")
