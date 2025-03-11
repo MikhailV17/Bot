@@ -1,10 +1,19 @@
 import math
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from database.models import Banner, Cart, Category, Product, User
 
+############### Выборка остатка действующих ключей ###############
+
+async def orm_get_available_keys_count(session: AsyncSession, product_id: int) -> int:
+    query = select(func.count(Key.id)).where(
+        Key.product_id == product_id,
+        Key.used == 0
+    )
+    result = await session.execute(query)
+    return result.scalar()
 
 ############### Работа с баннерами (информационными страницами) ###############
 

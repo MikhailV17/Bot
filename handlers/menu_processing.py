@@ -1,3 +1,5 @@
+from sqlalchemy import select, func  # Добавляем импорт select и func
+
 from aiogram.types import InputMediaPhoto
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +11,7 @@ from database.orm_query import (
     orm_get_products,
     orm_get_user_carts,
     orm_reduce_product_in_cart,
+    orm_get_available_keys_count,
 )
 from kbds.inline import (
     get_products_btns,
@@ -50,16 +53,23 @@ def pages(paginator: Paginator):
     return btns
 
 
+
+
 async def products(session, level, category, page):
+    # Получаем товары
     products = await orm_get_products(session, category_id=category)
 
     paginator = Paginator(products, page=page)
     product = paginator.get_page()[0]
 
+    # Получаем количество незадействованных ключей
+    available_keys = await orm_get_available_keys_count(session, product_id=product.id)
+
+    # Формируем подпись с остатком ключей
     image = InputMediaPhoto(
         media=product.image,
         caption=f"<strong>{product.name}\
-                </strong>\n{product.description}\nСтоимость: {round(product.price, 2)}\n\
+                </strong>\n{product.description}\nСтоимость: {round(product.price, 2)} руб.\n (Остаток: {available_keys})\n\
                 <strong>Товар {paginator.page} из {paginator.pages}</strong>",
     )
 
