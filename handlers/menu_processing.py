@@ -69,7 +69,7 @@ async def products(session, level, category, page):
     image = InputMediaPhoto(
         media=product.image,
         caption=f"<strong>{product.name}\
-                </strong>\n{product.description}\nСтоимость: {round(product.price, 2)} руб.\n (Остаток: {available_keys})\n\
+                </strong>\n{product.description}\nСтоимость: {round(product.price, 2)} USDT.\n (Остаток: {available_keys})\n\
                 <strong>Товар {paginator.page} из {paginator.pages}</strong>",
     )
 
@@ -124,8 +124,8 @@ async def carts(session, level, menu_name, page, user_id, product_id):
         )
         image = InputMediaPhoto(
             media=cart.product.image,
-            caption=f"<strong>{cart.product.name}</strong>\n{cart.product.price}$ x {cart.quantity} = {cart_price}$\
-                    \nТовар {paginator.page} из {paginator.pages} в корзине.\nОбщая стоимость товаров в корзине {total_price}",
+            caption=f"<strong>{cart.product.name}</strong>\n{cart.product.price} USDT x {cart.quantity} = {cart_price} USDT\
+                    \nТовар {paginator.page} из {paginator.pages} в корзине.\nОбщая стоимость товаров в корзине {total_price} USDT",
         )
 
         pagination_btns = pages(paginator)

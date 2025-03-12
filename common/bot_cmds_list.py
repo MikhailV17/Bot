@@ -6,4 +6,4 @@ private = [
      BotCommand(command='/admin', description='Управление'),
 #     BotCommand(command='payment', description='Варианты оплаты'),
 #     BotCommand(command='shipping', description='Варианты доставки'),
-# ]
+]
