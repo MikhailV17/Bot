@@ -49,7 +49,7 @@ class Key(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey('user.user_id', ondelete='SET NULL'), nullable=True)  # Новый внешний ключ
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=True)
-    key_value: Mapped[str] = mapped_column(String(150), nullable=True)  # Текстовый ключ, необязательно
+    key_value: Mapped[str] = mapped_column(Text, nullable=True)  # Текстовый ключ, необязательно
     key_file: Mapped[str] = mapped_column(String(150), nullable=True)  # Путь к файлу, необязательно
     expiration_date: Mapped[DateTime] = mapped_column(DateTime, nullable=True)  # Срок действия, необязательно
     used: Mapped[int] = mapped_column(default=0)  # 0 - не использован, 1 - использован
