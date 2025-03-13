@@ -7,6 +7,41 @@ from sqlalchemy.orm import joinedload
 
 from database.models import Banner, Cart, Category, Product, User, Key  # Добавляем Key сюда
 
+
+############### Работа с корзиной ###############
+async def orm_get_user_carts(session: AsyncSession, user_id):
+    query = select(Cart).filter(Cart.user_id == user_id).options(joinedload(Cart.product))
+    result = await session.execute(query)
+    return result.scalars().all()
+
+
+############### Оплата ###############
+async def orm_process_order_from_cart(session: AsyncSession, user_id: int, product_id: int) -> Key:
+    query = select(Cart).where(Cart.user_id == user_id, Cart.product_id == product_id)
+    result = await session.execute(query)
+    cart_item = result.scalar()
+
+    if not cart_item:
+        raise ValueError("Товар не найден в корзине!")
+
+    query = select(Key).where(Key.product_id == product_id, Key.used == 0).limit(1)
+    result = await session.execute(query)
+    key = result.scalar()
+
+    if not key:
+        raise ValueError("Нет доступных ключей для этого товара!")
+
+    key.user_id = user_id
+    key.used = 1
+
+    if cart_item.quantity > 1:
+        cart_item.quantity -= 1
+    else:
+        await session.delete(cart_item)
+
+    await session.commit()
+    return key
+
 ############### Редактирование/удаление ключей ###############
 async def orm_delete_key(session: AsyncSession, key_id: int):
     stmt = delete(Key).where(Key.id == key_id)
