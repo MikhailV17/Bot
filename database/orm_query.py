@@ -16,7 +16,8 @@ async def orm_get_user_carts(session: AsyncSession, user_id):
 
 
 ############### Оплата ###############
-async def orm_process_order_from_cart(session: AsyncSession, user_id: int, product_id: int) -> Key:
+async def orm_process_order_from_cart(session: AsyncSession, user_id: int, product_id: int) -> list[Key]:
+    # Получаем запись корзины
     query = select(Cart).where(Cart.user_id == user_id, Cart.product_id == product_id)
     result = await session.execute(query)
     cart_item = result.scalar()
@@ -24,23 +25,23 @@ async def orm_process_order_from_cart(session: AsyncSession, user_id: int, produ
     if not cart_item:
         raise ValueError("Товар не найден в корзине!")
 
-    query = select(Key).where(Key.product_id == product_id, Key.used == 0).limit(1)
+    # Получаем нужное количество ключей
+    quantity = cart_item.quantity
+    query = select(Key).where(Key.product_id == product_id, Key.used == 0).limit(quantity)
     result = await session.execute(query)
-    key = result.scalar()
+    keys = result.scalars().all()
 
-    if not key:
-        raise ValueError("Нет доступных ключей для этого товара!")
+    if len(keys) < quantity:
+        raise ValueError(f"Не хватает ключей для товара (нужно {quantity}, доступно {len(keys)})!")
 
-    key.user_id = user_id
-    key.used = 1
+    # Обновляем ключи и удаляем запись из корзины
+    for key in keys:
+        key.user_id = user_id
+        key.used = 1
 
-    if cart_item.quantity > 1:
-        cart_item.quantity -= 1
-    else:
-        await session.delete(cart_item)
-
+    await session.delete(cart_item)
     await session.commit()
-    return key
+    return keys
 
 ############### Редактирование/удаление ключей ###############
 async def orm_delete_key(session: AsyncSession, key_id: int):

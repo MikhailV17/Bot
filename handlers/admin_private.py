@@ -431,8 +431,8 @@ async def invalid_key_type(message: types.Message, state: FSMContext):
 # Ввод текстового значения ключа и сохранение
 @admin_router.message(AddKey.key_value, F.text)
 async def add_key_value(message: types.Message, state: FSMContext, session: AsyncSession):
-    if len(message.text) > 150:
-        await message.answer("Значение ключа не должно превышать 150 символов. Введите заново.")
+    if len(message.text) > 1500:
+        await message.answer("Значение ключа не должно превышать 1500 символов. Введите заново.")
         return
     data = await state.get_data()
     try:
@@ -630,8 +630,8 @@ async def update_key_value_text(message: types.Message, state: FSMContext, sessi
             await message.answer("Ключ с таким названием уже существует! Введите другое название.")
             return
     elif field == "key_value":
-        if len(new_value) > 150:
-            await message.answer("Значение ключа не должно превышать 150 символов. Введите заново.")
+        if len(new_value) > 1500:
+            await message.answer("Значение ключа не должно превышать 1500 символов. Введите заново.")
             return
 
     try:

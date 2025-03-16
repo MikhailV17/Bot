@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import os
 
 from database.orm_query import (
     orm_add_to_cart,
@@ -11,6 +12,7 @@ from database.orm_query import (
     orm_get_product,
     orm_get_user_carts,
     orm_process_order_from_cart,
+    orm_get_available_keys_count,
 )
 from filters.chat_types import ChatTypeFilter
 from handlers.menu_processing import get_menu_content
@@ -19,6 +21,9 @@ from database.models import Cart, Key
 
 user_private_router = Router()
 user_private_router.message.filter(ChatTypeFilter(["private"]))
+
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+
 
 # FSM для оплаты
 class OrderPayment(StatesGroup):
@@ -55,7 +60,29 @@ async def process_order(callback: types.CallbackQuery, callback_data: MenuCallBa
         await callback.answer()
         return
 
-    # Считаем общую сумму корзины
+    # Проверка наличия всех товаров в корзине
+    unavailable_items = []
+    for cart in carts:
+        available_keys = await orm_get_available_keys_count(session, cart.product_id)
+        if available_keys < cart.quantity:
+            unavailable_items.append(f"{cart.product.name} (нужно {cart.quantity}, доступно {available_keys})")
+
+    if unavailable_items:
+        # Если есть товары с недостаточным количеством ключей, показываем главное меню
+        unavailable_list = "\n".join(unavailable_items)
+        media, reply_markup = await get_menu_content(session, level=0, menu_name="main")
+        await callback.message.edit_media(
+            media=types.InputMediaPhoto(
+                media=media.media,
+                caption=f"{media.caption}\n\n*Недостаточно товаров в наличии:*\n{unavailable_list}\nПожалуйста, обновите корзину.",
+                parse_mode="Markdown"  # Перемещён сюда
+            ),
+            reply_markup=reply_markup  # Добавляем кнопки главного меню
+        )
+        await callback.answer()
+        return
+
+    # Если все товары доступны, продолжаем
     total_price = sum(cart.product.price * cart.quantity for cart in carts)
     product_list = "\n".join(f"{cart.product.name} ({cart.quantity} шт.)" for cart in carts)
 
@@ -65,7 +92,7 @@ async def process_order(callback: types.CallbackQuery, callback_data: MenuCallBa
     # Отправляем инструкцию по оплате
     await callback.message.edit_media(
         media=types.InputMediaPhoto(
-            media=callback.message.photo[-1].file_id,  # Используем последний элемент списка photo
+            media=callback.message.photo[-1].file_id,
             caption=f"Ваша корзина:\n{product_list}\n"
                     f"Итого: {total_price} USDT.\n\n"
                     f"Инструкция по оплате:\n"
@@ -73,7 +100,7 @@ async def process_order(callback: types.CallbackQuery, callback_data: MenuCallBa
                     f"2. Отправляйте только USDT в сети Tron.\n"
                     f"3. После оплаты нажмите 'Оплатил' и отправьте скриншот.\n"
                     f"4. Ожидайте подтверждения от администратора.",
-        parse_mode="Markdown"  # Указываем режим разметки
+            parse_mode="Markdown"
         ),
         reply_markup=get_callback_btns(
             btns={
@@ -91,7 +118,7 @@ async def process_order(callback: types.CallbackQuery, callback_data: MenuCallBa
 async def payment_confirmed(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_media(
         media=types.InputMediaPhoto(
-            media=callback.message.photo[-1].file_id,  # Используем последний элемент списка photo
+            media=callback.message.photo[-1].file_id,
             caption="Пожалуйста, отправьте скриншот оплаты."
         ),
         reply_markup=None
@@ -104,7 +131,7 @@ async def payment_confirmed(callback: types.CallbackQuery, state: FSMContext):
 async def payment_cancelled(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_media(
         media=types.InputMediaPhoto(
-            media=callback.message.photo[-1].file_id,  # Используем последний элемент списка photo
+            media=callback.message.photo[-1].file_id,
             caption="Заказ отменён."
         ),
         reply_markup=None
@@ -122,7 +149,6 @@ async def process_screenshot(message: types.Message, state: FSMContext, session:
     product_list = "\n".join(f"{cart.product.name} ({cart.quantity} шт.)" for cart in carts)
 
     # Отправляем скриншот администратору
-    ADMIN_ID = 700865418  # Замените на реальный ID администратора
     await message.bot.send_photo(
         ADMIN_ID,
         photo=message.photo[-1].file_id,
@@ -151,27 +177,36 @@ async def confirm_payment(callback: types.CallbackQuery, session: AsyncSession):
         return
 
     try:
-        # Обрабатываем все товары в корзине
-        keys = []
+        # Обрабатываем все товары в корзине и собираем ключи
+        all_keys = []
         for cart in carts:
-            key = await orm_process_order_from_cart(session, user_id, cart.product_id)
-            keys.append((cart.product, key))
+            keys = await orm_process_order_from_cart(session, user_id, cart.product_id)
+            for key in keys:
+                all_keys.append((cart.product, key))
 
-        # Формируем сообщение с ключами
+        # Формируем сообщение с ключами и ссылками на инструкции
         response = (
             "Ваша оплата подтверждена!\n"
             "Инструкция по использованию ключей:\n"
             "1. Скопируйте ключ или скачайте файл.\n"
             "2. Используйте его в соответствующем приложении.\n\n"
+            "Полезные ссылки на инструкции:\n"
+            "1. [Скачать приложение для Android](https://play.google.com/store/apps/details?id=org.amnezia.vpn&hl=ru)\n"
+            "2. [Скачать приложение для Android TV](https://play.google.com/store/search?q=amneziawg&c=apps&hl=ru)\n"
+            "3. [Скачать приложение для iOS (инструкция)](https://docs.amnezia.org/ru/documentation/instructions/installing-amneziavpn-on-ios/)\n"
+            "4. [Подключение через ключ в виде текста](https://docs.amnezia.org/ru/documentation/instructions/connect-via-text-key)\n"
+            "5. [Подключение через файл конфигурации](https://docs.amnezia.org/ru/documentation/instructions/connect-via-config)\n"
+            "6. [Подключение AmneziaVPN на Android TV](https://docs.amnezia.org/ru/documentation/instructions/android_tv_connect)\n\n"
         )
-        for product, key in keys:
-            response += f"Товар: {product.name}\nID ключа: {key.id}\n"
+        for product, key in all_keys:
+            response += f"Товар: {product.name}\n"
             if key.key_value:
-                response += f"Ключ: {key.key_value}\n"
+                response += f"Ключ: `{key.key_value}`\n"
             if key.key_file:
-                await callback.bot.send_document(user_id, key.key_file, caption=f"Ключ для {product.name}")
+                await callback.bot.send_document(user_id, key.key_file, caption=f"Товар: {product.name}")
 
-        await callback.bot.send_message(user_id, response)
+        # Отправляем сообщение с Markdown-разметкой
+        await callback.bot.send_message(user_id, response, parse_mode="Markdown")
         await callback.message.edit_caption("Оплата подтверждена, пользователю отправлены ключи.", reply_markup=None)
     except ValueError as e:
         await callback.bot.send_message(user_id, str(e))
@@ -179,6 +214,14 @@ async def confirm_payment(callback: types.CallbackQuery, session: AsyncSession):
     except Exception as e:
         await callback.bot.send_message(user_id, f"Ошибка: {str(e)}")
         await callback.message.edit_caption(f"Ошибка: {str(e)}", reply_markup=None)
+    await callback.answer()
+
+# Отклонение оплаты администратором
+@user_private_router.callback_query(F.data.startswith("reject_"))
+async def reject_payment(callback: types.CallbackQuery):
+    user_id = int(callback.data.split("_")[1])
+    await callback.bot.send_message(user_id, "Ваша оплата не подтверждена администратором. Попробуйте снова.")
+    await callback.message.edit_caption("Оплата отклонена.", reply_markup=None)
     await callback.answer()
 
 # Отклонение оплаты администратором
