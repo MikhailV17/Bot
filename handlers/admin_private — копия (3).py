@@ -1,7 +1,7 @@
 import logging
 import os
 from dotenv import load_dotenv
-from aiogram import F, Router, types, Bot
+from aiogram import F, Router, types, Bot  # Исправлен импорт Bot
 from aiogram.filters import Command, StateFilter, or_f
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -34,31 +34,22 @@ from database.models import Key
 
 # Загрузка переменных окружения из .env
 load_dotenv()
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_ID = int(os.getenv("ADMIN_ID"))  # Получаем ADMIN_ID из .env и преобразуем в int
 
 admin_router = Router()
 admin_router.message.filter(ChatTypeFilter(["private"]), IsAdmin())
 
-# Основная инлайн-клавиатура для администратора
+# Инлайн-клавиатура для администратора
 ADMIN_INLINE_KB = get_callback_btns(
     btns={
         "Добавить товар": "add_product",
         "Ассортимент": "list_products",
         "Добавить/Изменить баннер": "change_banner",
-        "Ключи": "keys_menu",
-        "Отмена операции": "cancel_operation",
-    },
-    sizes=(2,)
-)
-
-# Подменю для работы с ключами
-KEYS_INLINE_KB = get_callback_btns(
-    btns={
         "Добавить ключ": "add_key",
         "Удалить ключ": "delete_key",
         "Изменить ключ": "edit_key",
         "Список ключей": "list_keys",
-        "Назад": "back_to_main",
+        "Отмена операции": "cancel_operation",
     },
     sizes=(2,)
 )
@@ -66,18 +57,6 @@ KEYS_INLINE_KB = get_callback_btns(
 @admin_router.message(Command("admin"))
 async def admin_features(message: types.Message):
     await message.answer("Что хотите сделать?", reply_markup=ADMIN_INLINE_KB)
-
-# Переход в подменю "Ключи"
-@admin_router.callback_query(F.data == "keys_menu")
-async def keys_menu_callback(callback: types.CallbackQuery):
-    await callback.message.edit_text("Выберите действие с ключами:", reply_markup=KEYS_INLINE_KB)
-    await callback.answer()
-
-# Возврат в основное меню
-@admin_router.callback_query(F.data == "back_to_main")
-async def back_to_main_callback(callback: types.CallbackQuery):
-    await callback.message.edit_text("Что хотите сделать?", reply_markup=ADMIN_INLINE_KB)
-    await callback.answer()
 
 # Обработчики для кнопок ADMIN_INLINE_KB
 @admin_router.callback_query(F.data == "add_product")
@@ -119,7 +98,7 @@ async def delete_key_callback(callback: types.CallbackQuery, state: FSMContext, 
     result = await session.execute(query)
     keys = result.scalars().all()
     if not keys:
-        await callback.message.edit_text("Нет доступных ключей для удаления.", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("Нет доступных ключей для удаления.", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         btns = {f"{key.name} (ID: {key.id})": f"del_key_{key.id}" for key in keys}
@@ -136,7 +115,7 @@ async def edit_key_callback(callback: types.CallbackQuery, state: FSMContext, se
     result = await session.execute(query)
     keys = result.scalars().all()
     if not keys:
-        await callback.message.edit_text("Нет доступных ключей для изменения.", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("Нет доступных ключей для изменения.", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         btns = {f"{key.name} (ID: {key.id})": f"edit_key_{key.id}" for key in keys}
@@ -156,17 +135,11 @@ async def list_keys_callback(callback: types.CallbackQuery, state: FSMContext):
                 "Все ключи": "view_all_keys",
                 "Свободные ключи": "view_free_keys",
                 "Просроченные ключи": "view_expired_keys",
-                "Назад": "back_to_keys",
+                "Назад": "cancel",
             }
         )
     )
     await state.set_state(ViewKeys.key_list)
-    await callback.answer()
-
-@admin_router.callback_query(F.data == "back_to_keys")
-async def back_to_keys_callback(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Выберите действие с ключами:", reply_markup=KEYS_INLINE_KB)
-    await state.clear()
     await callback.answer()
 
 @admin_router.callback_query(F.data == "cancel_operation")
@@ -399,7 +372,7 @@ async def select_category_for_key(callback: types.CallbackQuery, state: FSMConte
     category_id = int(callback.data.split("_")[-1])
     products = await orm_get_products(session, category_id)
     if not products:
-        await callback.message.edit_text("В этой категории нет продуктов!", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("В этой категории нет продуктов!", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         btns = {product.name: f"key_prod_{product.id}" for product in products}
@@ -411,7 +384,7 @@ async def select_product_for_key(callback: types.CallbackQuery, state: FSMContex
     product_id = int(callback.data.split("_")[-1])
     product = await orm_get_product(session, product_id)
     if not product:
-        await callback.message.edit_text("Продукт не найден!", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("Продукт не найден!", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         await state.update_data(product_id=product_id)
@@ -502,9 +475,9 @@ async def add_validity_period(message: types.Message, state: FSMContext, session
             key_file=data.get("key_file"),
             validity_period=validity_period
         )
-        await message.answer("Ключ успешно добавлен!", reply_markup=KEYS_INLINE_KB)
+        await message.answer("Ключ успешно добавлен!", reply_markup=ADMIN_INLINE_KB)
     except Exception as e:
-        await message.answer(f"Ошибка при добавлении ключа: {str(e)}", reply_markup=KEYS_INLINE_KB)
+        await message.answer(f"Ошибка при добавлении ключа: {str(e)}", reply_markup=ADMIN_INLINE_KB)
     finally:
         await state.clear()
 
@@ -520,15 +493,15 @@ async def confirm_delete_key(callback: types.CallbackQuery, state: FSMContext, s
     result = await session.execute(query)
     key = result.scalar()
     if not key:
-        await callback.message.edit_text("Ключ не найден!", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("Ключ не найден!", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         try:
             await orm_delete_key(session, key_id)
             await session.commit()
-            await callback.message.edit_text(f"Ключ '{key.name}' (ID: {key_id}) удалён!", reply_markup=KEYS_INLINE_KB)
+            await callback.message.edit_text(f"Ключ '{key.name}' (ID: {key_id}) удалён!", reply_markup=ADMIN_INLINE_KB)
         except Exception as e:
-            await callback.message.edit_text(f"Ошибка при удалении ключа: {str(e)}", reply_markup=KEYS_INLINE_KB)
+            await callback.message.edit_text(f"Ошибка при удалении ключа: {str(e)}", reply_markup=ADMIN_INLINE_KB)
     await state.clear()
     await callback.answer()
 
@@ -550,7 +523,7 @@ async def select_key_to_edit(callback: types.CallbackQuery, state: FSMContext, s
     result = await session.execute(query)
     key = result.scalar()
     if not key:
-        await callback.message.edit_text("Ключ не найден!", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("Ключ не найден!", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         await state.update_data(key_id=key_id)
@@ -578,7 +551,7 @@ async def select_field_to_edit(callback: types.CallbackQuery, state: FSMContext)
     }
     mapped_field = field_mapping.get(field)
     if not mapped_field:
-        await callback.message.edit_text("Некорректное поле!", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("Некорректное поле!", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         await state.update_data(field=mapped_field)
@@ -608,9 +581,9 @@ async def update_key_value_text(message: types.Message, state: FSMContext, sessi
         try:
             await orm_update_key(session, key_id, {field: None})
             await session.commit()
-            await message.answer(f"Поле '{field}' ключа с ID {key_id} очищено!", reply_markup=KEYS_INLINE_KB)
+            await message.answer(f"Поле '{field}' ключа с ID {key_id} очищено!", reply_markup=ADMIN_INLINE_KB)
         except Exception as e:
-            await message.answer(f"Ошибка при очистке ключа: {str(e)}", reply_markup=KEYS_INLINE_KB)
+            await message.answer(f"Ошибка при очистке ключа: {str(e)}", reply_markup=ADMIN_INLINE_KB)
         finally:
             await state.clear()
         return
@@ -642,9 +615,9 @@ async def update_key_value_text(message: types.Message, state: FSMContext, sessi
     try:
         await orm_update_key(session, key_id, {field: new_value})
         await session.commit()
-        await message.answer(f"Поле '{field}' ключа с ID {key_id} обновлено!", reply_markup=KEYS_INLINE_KB)
+        await message.answer(f"Поле '{field}' ключа с ID {key_id} обновлено!", reply_markup=ADMIN_INLINE_KB)
     except Exception as e:
-        await message.answer(f"Ошибка при обновлении ключа: {str(e)}", reply_markup=KEYS_INLINE_KB)
+        await message.answer(f"Ошибка при обновлении ключа: {str(e)}", reply_markup=ADMIN_INLINE_KB)
     finally:
         await state.clear()
 
@@ -662,9 +635,9 @@ async def update_key_file(message: types.Message, state: FSMContext, session: As
     try:
         await orm_update_key(session, key_id, {field: new_value})
         await session.commit()
-        await message.answer(f"Поле '{field}' ключа с ID {key_id} обновлено!", reply_markup=KEYS_INLINE_KB)
+        await message.answer(f"Поле '{field}' ключа с ID {key_id} обновлено!", reply_markup=ADMIN_INLINE_KB)
     except Exception as e:
-        await message.answer(f"Ошибка при обновлении ключа: {str(e)}", reply_markup=KEYS_INLINE_KB)
+        await message.answer(f"Ошибка при обновлении ключа: {str(e)}", reply_markup=ADMIN_INLINE_KB)
     finally:
         await state.clear()
 
@@ -687,6 +660,22 @@ class SendMessage(StatesGroup):
     message_type = State()
     custom_message = State()
 
+@admin_router.callback_query(F.data == "list_keys")
+async def list_keys_callback(callback: types.CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "Выберите категорию ключей для просмотра:",
+        reply_markup=get_callback_btns(
+            btns={
+                "Все ключи": "view_all_keys",
+                "Свободные ключи": "view_free_keys",
+                "Просроченные ключи": "view_expired_keys",
+                "Назад": "cancel",
+            }
+        )
+    )
+    await state.set_state(ViewKeys.key_list)
+    await callback.answer()
+
 @admin_router.callback_query(ViewKeys.key_list, F.data.in_(["view_all_keys", "view_free_keys", "view_expired_keys"]))
 async def view_keys(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
     if callback.data == "view_all_keys":
@@ -700,7 +689,7 @@ async def view_keys(callback: types.CallbackQuery, state: FSMContext, session: A
         title = "Просроченные ключи:"
 
     if not keys:
-        await callback.message.edit_text(f"{title}\nКлючи не найдены.", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text(f"{title}\nКлючи не найдены.", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         response = f"{title}\n"
@@ -713,82 +702,14 @@ async def view_keys(callback: types.CallbackQuery, state: FSMContext, session: A
                 f"Статус: {status} | Срок: {key.validity_period or 'Нет'} дней | Окончание: {expiration}\n\n"
             )
             btns[f"Ключ {key.id}"] = f"key_action_{key.id}"
-        btns["Назад"] = "back_to_list"
         await callback.message.edit_text(response, reply_markup=get_callback_btns(btns=btns, sizes=(2,)))
         await state.set_state(ViewKeys.key_action)
     await callback.answer()
 
 @admin_router.callback_query(ViewKeys.key_list, F.data == "cancel")
 async def cancel_view_keys(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("Выберите действие с ключами:", reply_markup=KEYS_INLINE_KB)
+    await callback.message.edit_text("Выберите действие:", reply_markup=ADMIN_INLINE_KB)
     await state.clear()
-    await callback.answer()
-
-@admin_router.callback_query(ViewKeys.key_action, F.data.startswith("free_key_action_"))
-async def free_key_action(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
-    key_id = int(callback.data.split("_")[-1])
-    query = select(Key).where(Key.id == key_id).options(joinedload(Key.product))
-    result = await session.execute(query)
-    key = result.scalar()
-    if not key:
-        await callback.message.edit_text("Ключ не найден!", reply_markup=KEYS_INLINE_KB)
-        await state.clear()
-    else:
-        await state.update_data(key_id=key_id)
-        btns = {
-            "Изменить": f"edit_free_key_{key.id}",
-            "Удалить": f"del_free_key_{key.id}",
-            "Назад": "back_to_list",
-        }
-        await callback.message.edit_text(
-            f"Ключ ID: {key.id}\nТовар: {key.product.name}\nНазвание: {key.name}\nСтатус: Свободен\nВыберите действие:",
-            reply_markup=get_callback_btns(btns=btns)
-        )
-    await callback.answer()
-
-# Обработка "Изменить" для свободных ключей
-@admin_router.callback_query(ViewKeys.key_action, F.data.startswith("edit_free_key_"))
-async def edit_free_key(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
-    key_id = int(callback.data.split("_")[-1])
-    query = select(Key).where(Key.id == key_id)
-    result = await session.execute(query)
-    key = result.scalar()
-    if not key:
-        await callback.message.edit_text("Ключ не найден!", reply_markup=KEYS_INLINE_KB)
-        await state.clear()
-    else:
-        await state.update_data(key_id=key_id)
-        btns = {
-            "Название": "edit_field_name",
-            "Значение ключа": "edit_field_keyvalue",
-            "Файл ключа": "edit_field_keyfile",
-            "Срок действия": "edit_field_validityperiod",
-        }
-        await callback.message.edit_text(
-            f"Выберите поле ключа '{key.name}' (ID: {key.id}) для изменения:",
-            reply_markup=get_callback_btns(btns=btns)
-        )
-        await state.set_state(EditKey.field_selection)
-    await callback.answer()
-
-# Обработка "Удалить" для свободных ключей
-@admin_router.callback_query(ViewKeys.key_action, F.data.startswith("del_free_key_"))
-async def delete_free_key(callback: types.CallbackQuery, state: FSMContext, session: AsyncSession):
-    key_id = int(callback.data.split("_")[-1])
-    query = select(Key).where(Key.id == key_id)
-    result = await session.execute(query)
-    key = result.scalar()
-    if not key:
-        await callback.message.edit_text("Ключ не найден!", reply_markup=KEYS_INLINE_KB)
-        await state.clear()
-    else:
-        try:
-            await orm_delete_key(session, key_id)
-            await session.commit()
-            await callback.message.edit_text(f"Ключ '{key.name}' (ID: {key_id}) удалён!", reply_markup=KEYS_INLINE_KB)
-        except Exception as e:
-            await callback.message.edit_text(f"Ошибка при удалении ключа: {str(e)}", reply_markup=KEYS_INLINE_KB)
-        await state.clear()
     await callback.answer()
 
 @admin_router.callback_query(ViewKeys.key_action, F.data.startswith("key_action_"))
@@ -798,44 +719,34 @@ async def key_action(callback: types.CallbackQuery, state: FSMContext, session: 
     result = await session.execute(query)
     key = result.scalar()
     if not key:
-        await callback.message.edit_text("Ключ не найден!", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("Ключ не найден!", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         await state.update_data(key_id=key_id)
-        if not key.used:  # Свободный ключ
-            btns = {
-                "Изменить": f"edit_free_key_{key.id}",
-                "Удалить": f"del_free_key_{key.id}",
-                "Назад": "back_to_list",
-            }
-            user_info = "Свободен"
-        else:  # Купленный ключ
-            btns = {
-                "Отправить уведомление": "send_expiration_notice",
-                "Написать сообщение": "send_custom_message",
-                "Назад": "back_to_list",
-            }
-            user_info = f"Куплен пользователем: {key.user_id}"
+        btns = {
+            "Отправить уведомление": "send_expiration_notice",
+            "Написать сообщение": "send_custom_message",
+            "Назад": "back_to_list",
+        }
+        user_info = f"Куплен пользователем: {key.user_id}" if key.used else "Свободен"
         await callback.message.edit_text(
             f"Ключ ID: {key.id}\nТовар: {key.product.name}\nНазвание: {key.name}\n{user_info}\nВыберите действие:",
             reply_markup=get_callback_btns(btns=btns)
         )
-        if key.used:
-            await state.set_state(SendMessage.message_type)
-        else:
-            await state.set_state(ViewKeys.key_action)
+        await state.set_state(SendMessage.message_type)
     await callback.answer()
 
 @admin_router.callback_query(ViewKeys.key_action, F.data == "back_to_list")
 async def back_to_key_list(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
+    await callback.message.delete()
+    await callback.message.answer(
         "Выберите категорию ключей для просмотра:",
         reply_markup=get_callback_btns(
             btns={
                 "Все ключи": "view_all_keys",
                 "Свободные ключи": "view_free_keys",
                 "Просроченные ключи": "view_expired_keys",
-                "Назад": "back_to_keys",
+                "Назад": "cancel",
             }
         )
     )
@@ -851,7 +762,7 @@ async def send_expiration_notice(callback: types.CallbackQuery, state: FSMContex
     key = result.scalar()
 
     if not key.user_id:
-        await callback.message.edit_text("Этот ключ не куплен, уведомление не отправлено.", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("Этот ключ не куплен, уведомление не отправлено.", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     else:
         notice = (
@@ -861,7 +772,7 @@ async def send_expiration_notice(callback: types.CallbackQuery, state: FSMContex
             "Для продления обратитесь к администратору."
         )
         await callback.bot.send_message(key.user_id, notice)
-        await callback.message.edit_text("Уведомление об окончании срока действия отправлено.", reply_markup=KEYS_INLINE_KB)
+        await callback.message.edit_text("Уведомление об окончании срока действия отправлено.", reply_markup=ADMIN_INLINE_KB)
         await state.clear()
     await callback.answer()
 
@@ -881,12 +792,12 @@ async def send_custom_message(message: types.Message, state: FSMContext, session
         key = result.scalar()
 
         if not key.user_id:
-            await message.answer("Этот ключ не куплен, сообщение не отправлено.", reply_markup=KEYS_INLINE_KB)
+            await message.answer("Этот ключ не куплен, сообщение не отправлено.", reply_markup=ADMIN_INLINE_KB)
             await state.clear()
             return
 
         if message.text == "-":
-            await message.answer("Отправка сообщения отменена.", reply_markup=KEYS_INLINE_KB)
+            await message.answer("Отправка сообщения отменена.", reply_markup=ADMIN_INLINE_KB)
             await state.clear()
             return
 
@@ -901,9 +812,9 @@ async def send_custom_message(message: types.Message, state: FSMContext, session
                     }
                 )
             )
-            await message.answer("Сообщение отправлено пользователю.", reply_markup=KEYS_INLINE_KB)
+            await message.answer("Сообщение отправлено пользователю.", reply_markup=ADMIN_INLINE_KB)
         except Exception as e:
-            await message.answer(f"Ошибка при отправке сообщения: {str(e)}", reply_markup=KEYS_INLINE_KB)
+            await message.answer(f"Ошибка при отправке сообщения: {str(e)}", reply_markup=ADMIN_INLINE_KB)
         finally:
             await state.clear()
     elif "user_id" in data and "is_admin_reply" not in data:  # Ответ пользователя администратору
@@ -932,7 +843,7 @@ async def send_custom_message(message: types.Message, state: FSMContext, session
     elif "user_id" in data and "is_admin_reply" in data:  # Ответ администратора пользователю
         user_id = data["user_id"]
         if message.text == "-":
-            await message.answer("Отправка ответа отменена.", reply_markup=KEYS_INLINE_KB)
+            await message.answer("Отправка ответа отменена.", reply_markup=ADMIN_INLINE_KB)
             await state.clear()
             return
         try:
@@ -946,9 +857,9 @@ async def send_custom_message(message: types.Message, state: FSMContext, session
                     }
                 )
             )
-            await message.answer("Ответ отправлен пользователю.", reply_markup=KEYS_INLINE_KB)
+            await message.answer("Ответ отправлен пользователю.", reply_markup=ADMIN_INLINE_KB)
         except Exception as e:
-            await message.answer(f"Ошибка при отправке ответа: {str(e)}", reply_markup=KEYS_INLINE_KB)
+            await message.answer(f"Ошибка при отправке ответа: {str(e)}", reply_markup=ADMIN_INLINE_KB)
         finally:
             await state.clear()
 
@@ -987,7 +898,7 @@ async def admin_reply_to_user(callback: types.CallbackQuery, state: FSMContext):
 @admin_router.callback_query(F.data.startswith("cancel_admin_reply_"))
 async def cancel_admin_reply(callback: types.CallbackQuery, state: FSMContext, bot: Bot):
     user_id = int(callback.data.split("_")[-1])
-    await callback.message.edit_text("Диалог завершён.", reply_markup=KEYS_INLINE_KB)
+    await callback.message.edit_text("Диалог завершён.", reply_markup=ADMIN_INLINE_KB)
     try:
         await bot.send_message(
             user_id,

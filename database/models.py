@@ -52,6 +52,9 @@ class Key(Base):
     key_value: Mapped[str] = mapped_column(Text, nullable=True)  # Текстовый ключ, необязательно
     key_file: Mapped[str] = mapped_column(String(150), nullable=True)  # Путь к файлу, необязательно
     expiration_date: Mapped[DateTime] = mapped_column(DateTime, nullable=True)  # Срок действия, необязательно
+    validity_period: Mapped[int] = mapped_column(nullable=True)  # Срок действия в днях, необязательно
+    purchase_date: Mapped[DateTime] = mapped_column(DateTime, nullable=True)  # Дата покупки
+
     used: Mapped[int] = mapped_column(default=0)  # 0 - не использован, 1 - использован
 
     product: Mapped['Product'] = relationship(back_populates="keys")  # Связь с продуктом

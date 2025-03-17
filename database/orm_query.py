@@ -1,11 +1,10 @@
 import math
+from datetime import datetime, timedelta
 from sqlalchemy import select, update, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-#from database.models import Banner, Cart, Category, Product, User
-
-from database.models import Banner, Cart, Category, Product, User, Key  # Добавляем Key сюда
+from database.models import Banner, Cart, Category, Product, User, Key
 
 
 ############### Работа с корзиной ###############
@@ -17,7 +16,6 @@ async def orm_get_user_carts(session: AsyncSession, user_id):
 
 ############### Оплата ###############
 async def orm_process_order_from_cart(session: AsyncSession, user_id: int, product_id: int) -> list[Key]:
-    # Получаем запись корзины
     query = select(Cart).where(Cart.user_id == user_id, Cart.product_id == product_id)
     result = await session.execute(query)
     cart_item = result.scalar()
@@ -25,7 +23,6 @@ async def orm_process_order_from_cart(session: AsyncSession, user_id: int, produ
     if not cart_item:
         raise ValueError("Товар не найден в корзине!")
 
-    # Получаем нужное количество ключей
     quantity = cart_item.quantity
     query = select(Key).where(Key.product_id == product_id, Key.used == 0).limit(quantity)
     result = await session.execute(query)
@@ -34,14 +31,28 @@ async def orm_process_order_from_cart(session: AsyncSession, user_id: int, produ
     if len(keys) < quantity:
         raise ValueError(f"Не хватает ключей для товара (нужно {quantity}, доступно {len(keys)})!")
 
-    # Обновляем ключи и удаляем запись из корзины
+    current_date = datetime.utcnow()
     for key in keys:
         key.user_id = user_id
         key.used = 1
+        key.purchase_date = current_date
+        if key.validity_period:
+            key.expiration_date = current_date + timedelta(days=key.validity_period)
 
     await session.delete(cart_item)
     await session.commit()
     return keys
+
+async def orm_add_key(session: AsyncSession, product_id: int, name: str, key_value: str = None, key_file: str = None, validity_period: int = None):
+    key = Key(
+        product_id=product_id,
+        name=name,
+        key_value=key_value,
+        key_file=key_file,
+        validity_period=validity_period  # Добавляем параметр в создание объекта
+    )
+    session.add(key)
+    await session.commit()
 
 ############### Редактирование/удаление ключей ###############
 async def orm_delete_key(session: AsyncSession, key_id: int):
@@ -221,17 +232,25 @@ async def orm_reduce_product_in_cart(session: AsyncSession, user_id: int, produc
         await session.commit()
         return False
 
+# Все ключи
+async def orm_get_all_keys(session: AsyncSession):
+    query = select(Key).options(joinedload(Key.product))
+    result = await session.execute(query)
+    return result.scalars().all()
 
-######################## Добавление ключей #######################################
-from sqlalchemy.ext.asyncio import AsyncSession
-from database.models import Key
+# Свободные ключи
+async def orm_get_free_keys(session: AsyncSession):
+    query = select(Key).where(Key.used == 0).options(joinedload(Key.product))
+    result = await session.execute(query)
+    return result.scalars().all()
 
-async def orm_add_key(session: AsyncSession, product_id: int, name: str, key_value: str = None, key_file: str = None):
-    key = Key(
-        product_id=product_id,
-        name=name,
-        key_value=key_value,
-        key_file=key_file
-    )
-    session.add(key)
-    await session.commit()
+# Просроченные ключи
+async def orm_get_expired_keys(session: AsyncSession):
+    current_date = datetime.utcnow()
+    query = select(Key).where(
+        Key.used == 1,
+        Key.expiration_date.isnot(None),
+        Key.expiration_date < current_date
+    ).options(joinedload(Key.product))
+    result = await session.execute(query)
+    return result.scalars().all()

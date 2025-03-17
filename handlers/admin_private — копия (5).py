@@ -712,8 +712,10 @@ async def view_keys(callback: types.CallbackQuery, state: FSMContext, session: A
                 f"ID: {key.id} | Товар: {key.product.name} | Название: {key.name}\n"
                 f"Статус: {status} | Срок: {key.validity_period or 'Нет'} дней | Окончание: {expiration}\n\n"
             )
-            btns[f"Ключ {key.id}"] = f"key_action_{key.id}"
-        btns["Назад"] = "back_to_list"
+            if callback.data == "view_free_keys":  # Только для свободных ключей
+                btns[f"Ключ {key.id}"] = f"free_key_action_{key.id}"
+            else:
+                btns[f"Ключ {key.id}"] = f"key_action_{key.id}"
         await callback.message.edit_text(response, reply_markup=get_callback_btns(btns=btns, sizes=(2,)))
         await state.set_state(ViewKeys.key_action)
     await callback.answer()
@@ -802,33 +804,23 @@ async def key_action(callback: types.CallbackQuery, state: FSMContext, session: 
         await state.clear()
     else:
         await state.update_data(key_id=key_id)
-        if not key.used:  # Свободный ключ
-            btns = {
-                "Изменить": f"edit_free_key_{key.id}",
-                "Удалить": f"del_free_key_{key.id}",
-                "Назад": "back_to_list",
-            }
-            user_info = "Свободен"
-        else:  # Купленный ключ
-            btns = {
-                "Отправить уведомление": "send_expiration_notice",
-                "Написать сообщение": "send_custom_message",
-                "Назад": "back_to_list",
-            }
-            user_info = f"Куплен пользователем: {key.user_id}"
+        btns = {
+            "Отправить уведомление": "send_expiration_notice",
+            "Написать сообщение": "send_custom_message",
+            "Назад": "back_to_list",
+        }
+        user_info = f"Куплен пользователем: {key.user_id}" if key.used else "Свободен"
         await callback.message.edit_text(
             f"Ключ ID: {key.id}\nТовар: {key.product.name}\nНазвание: {key.name}\n{user_info}\nВыберите действие:",
             reply_markup=get_callback_btns(btns=btns)
         )
-        if key.used:
-            await state.set_state(SendMessage.message_type)
-        else:
-            await state.set_state(ViewKeys.key_action)
+        await state.set_state(SendMessage.message_type)
     await callback.answer()
 
 @admin_router.callback_query(ViewKeys.key_action, F.data == "back_to_list")
 async def back_to_key_list(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
+    await callback.message.delete()
+    await callback.message.answer(
         "Выберите категорию ключей для просмотра:",
         reply_markup=get_callback_btns(
             btns={

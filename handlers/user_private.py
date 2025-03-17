@@ -184,7 +184,7 @@ async def confirm_payment(callback: types.CallbackQuery, session: AsyncSession):
             for key in keys:
                 all_keys.append((cart.product, key))
 
-        # Формируем сообщение с ключами и ссылками на инструкции
+        # Формируем сообщение с ключами в новом формате
         response = (
             "Ваша оплата подтверждена!\n"
             "Инструкция по использованию ключей:\n"
@@ -197,16 +197,27 @@ async def confirm_payment(callback: types.CallbackQuery, session: AsyncSession):
             "4. [Подключение через ключ в виде текста](https://docs.amnezia.org/ru/documentation/instructions/connect-via-text-key)\n"
             "5. [Подключение через файл конфигурации](https://docs.amnezia.org/ru/documentation/instructions/connect-via-config)\n"
             "6. [Подключение AmneziaVPN на Android TV](https://docs.amnezia.org/ru/documentation/instructions/android_tv_connect)\n\n"
+            "*Ваши ключи:*\n"
         )
         for product, key in all_keys:
-            response += f"Товар: {product.name}\n"
+            response += "Товар: {}\n".format(product.name)
+            response += "Дата приобретения: {}\n".format(key.purchase_date.strftime('%Y-%m-%d %H:%M:%S UTC'))
+            if key.validity_period:
+                response += "Срок действия: {} дней\n".format(key.validity_period)
+                response += "Дата окончания: {}\n".format(key.expiration_date.strftime('%Y-%m-%d %H:%M:%S UTC'))
+            else:
+                response += "Срок действия: Бессрочный\n"
+
             if key.key_value:
-                response += f"Ключ: `{key.key_value}`\n"
+                response += "Ключ: `{}`\n".format(key.key_value)
+            response += "\n"
+
+            # Отправляем файл, если он есть
             if key.key_file:
                 await callback.bot.send_document(user_id, key.key_file, caption=f"Товар: {product.name}")
 
-        # Отправляем сообщение с Markdown-разметкой
-        await callback.bot.send_message(user_id, response, parse_mode="Markdown")
+        # Отправляем сообщение с Markdown-разметкой и отключённым превью
+        await callback.bot.send_message(user_id, response, parse_mode="Markdown", disable_web_page_preview=True)
         await callback.message.edit_caption("Оплата подтверждена, пользователю отправлены ключи.", reply_markup=None)
     except ValueError as e:
         await callback.bot.send_message(user_id, str(e))
